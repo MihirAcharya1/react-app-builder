@@ -25,7 +25,60 @@ Builds the app for production to the `build` folder.\
 It correctly bundles React in production mode and optimizes the build for the best performance.
 
 The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+Your app is ready to be deploy
+import React, { useState } from 'react';
+
+const CsvToJsonConverter = () => {
+  const [csvFile, setCsvFile] = useState(null);
+  const [jsonResult, setJsonResult] = useState(null);
+
+  const handleFileChange = (event) => {
+    setCsvFile(event.target.files[0]);
+  };
+
+  const handleParse = () => {
+    if (csvFile) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const text = e.target.result;
+        const json = csvToJson(text);
+        setJsonResult(json);
+      };
+      reader.readAsText(csvFile);
+    }
+  };
+
+  const csvToJson = (csvText) => {
+    const lines = csvText.split('\n');
+    const headers = lines[0].split(',').map(header => header.trim());
+    const result = lines.slice(1).map(line => {
+      const values = line.split(',').map(value => value.trim());
+      const obj = headers.reduce((acc, header, index) => {
+        acc[header] = values[index];
+        return acc;
+      }, {});
+      return obj;
+    });
+    return result.filter(item => Object.keys(item).length > 0); // Filter out empty objects
+  };
+
+  return (
+    <div>
+      <h1>CSV to JSON Converter</h1>
+      <input type="file" accept=".csv" onChange={handleFileChange} />
+      <button onClick={handleParse}>Convert</button>
+      {jsonResult && (
+        <div>
+          <h2>JSON Result</h2>
+          <pre>{JSON.stringify(jsonResult, null, 2)}</pre>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default CsvToJsonConverter;
+
 
 See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
 
