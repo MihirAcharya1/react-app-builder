@@ -26,58 +26,107 @@ It correctly bundles React in production mode and optimizes the build for the be
 
 The build is minified and the filenames include the hashes.\
 Your app is ready to be deploy
-import React, { useState } from 'react';
+const cron = require('node-cron');
+const fetch = require('node-fetch');
 
-const CsvToJsonConverter = () => {
-  const [csvFile, setCsvFile] = useState(null);
-  const [jsonResult, setJsonResult] = useState(null);
+// Schedule the cron job to run daily
+cron.schedule('0 0 * * *', async () => {
+  console.log('Running dunning management cron job');
+  await handleDunningManagement();
+});
 
-  const handleFileChange = (event) => {
-    setCsvFile(event.target.files[0]);
-  };
-
-  const handleParse = () => {
-    if (csvFile) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const text = e.target.result;
-        const json = csvToJson(text);
-        setJsonResult(json);
-      };
-      reader.readAsText(csvFile);
+async function handleDunningManagement() {
+  try {
+    const failedSubscriptions = await fetchFailedSubscriptions();
+    for (const subscription of failedSubscriptions) {
+      if (subscription.failed_payment_attempts >= 3) {
+        await pauseOrCancelSubscription(subscription.id);
+      }
     }
-  };
+  } catch (error) {
+    console.error('Error handling dunning management:', error);
+  }
+}
 
-  const csvToJson = (csvText) => {
-    const lines = csvText.split('\n');
-    const headers = lines[0].split(',').map(header => header.trim());
-    const result = lines.slice(1).map(line => {
-      const values = line.split(',').map(value => value.trim());
-      const obj = headers.reduce((acc, header, index) => {
-        acc[header] = values[index];
-        return acc;
-      }, {});
-      return obj;
-    });
-    return result.filter(item => Object.keys(item).length > 0); // Filter out empty objects
-  };
+async function fetchFailedSubscriptions() {
+  const query = `
+    query {
+      subscriptions(first: 100, query: "status:ACTIVE") {
+        edges {
+          node {
+            id
+            failedPaymentCount
+          }
+        }
+      }
+    }
+  `;
 
-  return (
-    <div>
-      <h1>CSV to JSON Converter</h1>
-      <input type="file" accept=".csv" onChange={handleFileChange} />
-      <button onClick={handleParse}>Convert</button>
-      {jsonResult && (
-        <div>
-          <h2>JSON Result</h2>
-          <pre>{JSON.stringify(jsonResult, null, 2)}</pre>
-        </div>
-      )}
-    </div>
-  );
-};
+  const response = await fetch(`https://${process.env.SHOPIFY_SHOP_NAME}.myshopify.com/admin/api/2021-04/graphql.json`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Shopify-Access-Token': process.env.SHOPIFY_API_PASSWORD,
+    },
+    body: JSON.stringify({ query }),
+  });
 
-export default CsvToJsonConverter;
+  const result = await response.json();
+  if (result.errors) {
+    throw new Error(result.errors[0].message);
+  }
+
+  return result.data.subscriptions.edges.map(edge => ({
+    id: edge.node.id,
+    failed_payment_attempts: edge.node.failedPaymentCount,
+  }));
+}
+
+async function pauseOrCancelSubscription(subscriptionId) {
+  const mutation = `
+    mutation {
+      subscriptionContractUpdate(
+        id: "${subscriptionId}",
+        input: {
+          status: PAUSED
+        }
+      ) {
+        userErrors {
+          field
+          message
+        }
+        subscriptionContract {
+          id
+        }
+      }
+    }
+  `;
+
+  const response = await fetch(`https://${process.env.SHOPIFY_SHOP_NAME}.myshopify.com/admin/api/2021-04/graphql.json`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Shopify-Access-Token': process.env.SHOPIFY_API_PASSWORD,
+    },
+    body: JSON.stringify({ mutation }),
+  });
+
+  const result = await response.json();
+  if (result.errors) {
+    throw new Error(result.errors[0].message);
+  }
+
+  const userErrors = result.data.subscriptionContractUpdate.userErrors;
+  if (userErrors.length > 0) {
+    throw new Error(userErrors[0].message);
+  }
+
+  console.log(`Subscription ${subscriptionId} has been paused.`);
+}
+
+// Start the cron job immediately
+handleDunningManagement();
+
 
 
 See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
